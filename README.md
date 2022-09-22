@@ -21,9 +21,16 @@ In this application we will learn how to configure google app into AWS cognito.
   - In line 16 (variable **LogOutUrlUserPoolClient**), you have to provide the url where cognito will be redirected after logout. You can add multiple url by comma separation.
   - In line 17 (variable **FIDGoogleClientId**), you have to give client id of google app. See [How to configure google app](https://medium.com/@farzanajuthi08/how-to-set-up-google-app-and-configure-amazon-cognito-for-social-sign-in-6844bc9bf605)
   - In line 18 (variable **FIDGoogleClientSecret**), you have to give secret client id of google app.
+  ```
+  Example:
+    "CallBackUrlUserPoolClient": "http://localhost:4200/dashboard/" 
+    "LogOutUrlUserPoolClient": "http://localhost:4200/login/" 
+    "FIDGoogleClientId": "816187719480-26d52o4pnfe789ivkjqdm0jqakk19m38.apps.googleusercontent.com" 
+    "FIDGoogleClientSecret": "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" 
+  ```
 - Then give a project name into line 27. Here you have to set the value of the **ProjectName** parameter. Remember this data will be used to make domain name and domain name need to be unique.
-  **You must have to change this value** 
-- After that install boto3 and pydantic packages.
+  **You must change this value**
+
 - Then open terminal in root folder of this project and run following command:
   ```
     sam build
