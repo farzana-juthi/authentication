@@ -1,0 +1,547 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: >
+  Authentication Nested Stack
+
+# adding all environment variables in Global will generate circular dependency for cognito lambda triggers! So avoid it to add all these globally
+Globals:
+  Function:
+    Timeout: 10
+    Runtime: python3.8
+    Tracing: Active
+    Environment:
+      Variables:
+        STAGE_NAME: !Ref StageName
+
+Parameters:
+  StageName:
+    Type: String
+  UserPoolName:
+    Type: String
+  IdentityPoolName:
+    Type: String
+  UserPoolClientName:
+    Type: String
+  CreateCognitoDomain:
+    Type: String
+  EnableFederatedGoogle:
+    Type: String
+  DomainName:
+    Type: String
+  VerifyEmail:
+    Type: String
+  VerifyPhone:
+    Type: String
+  EmailAsAlias:
+    Type: String
+  PhoneAsAlias:
+    Type: String
+  PasswordMinimumLength:
+    Type: Number
+  PasswordLowerLetterRequired:
+    Type: String
+  PasswordUpperLetterRequired:
+    Type: String
+  PasswordNumberRequired:
+    Type: String
+  PasswordSymbolRequired:
+    Type: String
+  FIDGoogleClientId:
+    Type: String
+  FIDGoogleClientSecret:
+    Type: String
+  CallBackUrlUserPoolClient:
+    Type: CommaDelimitedList
+  LogOutUrlUserPoolClient:
+    Type: CommaDelimitedList
+  AuthRoleArn:
+    Type: String
+
+
+Conditions:
+  DoRequireLowerLetter: !Equals [ !Ref PasswordLowerLetterRequired, "y" ]
+  DoRequireUpperLetter: !Equals [ !Ref PasswordUpperLetterRequired, "y" ]
+  DoRequireNumber: !Equals [ !Ref PasswordNumberRequired, "y" ]
+  DoRequireSymbol: !Equals [ !Ref PasswordSymbolRequired, "y" ]
+  DoVerifyEmail: !Equals [ !Ref VerifyEmail, "y" ]
+  DoVerifyPhone: !Equals [ !Ref VerifyPhone, "y" ]
+  DoEmailAsAlias: !Equals [ !Ref EmailAsAlias, "y" ]
+  DoPhoneAsAlias: !Equals [ !Ref PhoneAsAlias, "y" ]
+  DoCreateCognitoDomain: !Equals [ !Ref CreateCognitoDomain, "y" ]
+  DoEnableFederatedGoogle: !Equals [ !Ref EnableFederatedGoogle, "y" ]
+  DoCreateOAuthFlow: !Equals [ !Ref EnableFederatedGoogle, "y" ]
+
+
+Resources:
+  # ================================= Keys =================================
+  CustomKey:
+    Type: AWS::KMS::Key
+    Properties:
+      Description: An example symmetric CMK
+      EnableKeyRotation: true
+      PendingWindowInDays: 20
+      KeyPolicy:
+        Version: '2012-10-17'
+        Id: key-default-1
+        Statement:
+          - Sid: Enable IAM User Permissions
+            Effect: Allow
+            Principal:
+              AWS: !Sub "arn:aws:iam::${AWS::AccountId}:root"
+            Action: kms:*
+            Resource: '*'
+
+
+  # ================================= Role & Permission =================================
+  CognitoPreSignUpFunctionPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !GetAtt PreSignUpFunction.Arn
+      Principal: cognito-idp.amazonaws.com
+      SourceArn: !GetAtt UserPool.Arn
+
+  CognitoPostConfirmationFunctionPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !GetAtt PostConfirmationFunction.Arn
+      Principal: cognito-idp.amazonaws.com
+      SourceArn: !GetAtt UserPool.Arn
+
+  CognitoPreAuthenticationFunctionPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !GetAtt PreAuthenticationFunction.Arn
+      Principal: cognito-idp.amazonaws.com
+      SourceArn: !GetAtt UserPool.Arn
+
+  CognitoUnAuthenticatedRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: "Allow"
+            Principal:
+              Federated: "cognito-identity.amazonaws.com"
+            Action:
+              - "sts:AssumeRoleWithWebIdentity"
+            Condition:
+              StringEquals:
+                "cognito-identity.amazonaws.com:aud": !Ref IdentityPool
+              "ForAnyValue:StringLike":
+                "cognito-identity.amazonaws.com:amr": unauthenticated
+      Policies:
+        - PolicyName: !Sub "${IdentityPoolName}_unauthenticated_policy"
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: "Allow"
+                Action:
+                  - "mobileanalytics:PutEvents"
+                  - "cognito-sync:*"
+                  - "s3:*"
+                Resource: "*"
+
+  CognitoAuthenticatedRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: "Allow"
+            Principal:
+              Federated: "cognito-identity.amazonaws.com"
+            Action:
+              - "sts:AssumeRoleWithWebIdentity"
+            Condition:
+              StringEquals:
+                "cognito-identity.amazonaws.com:aud": !Ref IdentityPool
+              "ForAnyValue:StringLike":
+                "cognito-identity.amazonaws.com:amr": authenticated
+      Policies:
+        - PolicyName: !Sub "${IdentityPoolName}_authenticated_policy"
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: "Allow"
+                Action:
+                  - "mobileanalytics:PutEvents"
+                  - "cognito-sync:*"
+                  - "cognito-identity:*"
+                  - "s3:*"
+                Resource: "*"
+              - Effect: "Allow"
+                Action:
+                  - "lambda:InvokeFunction"
+                Resource: "*"
+
+
+  CognitoUserPoolMemberRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: "Allow"
+            Principal:
+              Federated: "cognito-identity.amazonaws.com"
+            Action:
+              - "sts:AssumeRoleWithWebIdentity"
+            Condition:
+              StringEquals:
+                "cognito-identity.amazonaws.com:aud": !Ref IdentityPool
+              "ForAnyValue:StringLike":
+                "cognito-identity.amazonaws.com:amr": authenticated
+      Policies:
+        - PolicyName: !Sub "${UserPoolName}_member_policy"
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: "Allow"
+                Action:
+                  - "execute-api:Invoke"
+                Resource: !Sub "arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${NestedDefaultApi}/*/GET/hello/member-hello"
+              - Effect: "Allow"
+                Action:
+                  - "lambda:InvokeFunction"
+                Resource: "*"
+
+  CustomSNSRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - cognito-idp.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      Policies:
+        - PolicyName: CustomSNSPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - sns:*
+                Resource: "*"
+
+
+  # ================================= User Pool & Client =================================
+
+  UserPoolMemberGroup:
+    Type: AWS::Cognito::UserPoolGroup
+    Properties:
+      Description: "member group"
+      GroupName: member
+      Precedence: 0
+      RoleArn: !GetAtt CognitoUserPoolMemberRole.Arn
+      UserPoolId: !Ref UserPool
+
+  UserPoolDomain:
+    Type: AWS::Cognito::UserPoolDomain
+    Condition: DoCreateCognitoDomain
+    Properties:
+      UserPoolId: !Ref UserPool
+      Domain: !Ref DomainName
+
+  UserPool:
+    Type: AWS::Cognito::UserPool
+    Properties:
+      UserPoolName: !Ref UserPoolName
+      AliasAttributes:
+        - !If [ DoEmailAsAlias, email, !Ref "AWS::NoValue" ]
+        - !If [ DoPhoneAsAlias, phone_number, !Ref "AWS::NoValue" ]
+      AutoVerifiedAttributes:
+        - !If [ DoVerifyEmail, email, !Ref "AWS::NoValue" ]
+        - !If [ DoVerifyPhone, phone_number, !Ref "AWS::NoValue" ]
+      Schema:
+        - Name: name
+          AttributeDataType: String
+          Mutable: true # if mutable is false, issues during signin while trying to update attributes
+          Required: false
+        - Name: email
+          AttributeDataType: String
+          Mutable: true
+          Required: false
+        - Name: phone_number
+          AttributeDataType: String
+          Mutable: true
+          Required: false
+        - Name: role
+          AttributeDataType: String
+          Mutable: true
+          Required: false
+          StringAttributeConstraints:
+            MaxLength: 256
+            MinLength: 1
+        - Name: signupMedium
+          AttributeDataType: String
+          Mutable: true
+          Required: false
+          StringAttributeConstraints:
+            MaxLength: 256
+            MinLength: 1
+        - Name: customUserId
+          AttributeDataType: String
+          Mutable: true
+          Required: false
+          StringAttributeConstraints:
+            MaxLength: 256
+            MinLength: 1
+        - Name: firstName
+          AttributeDataType: String
+          Mutable: true
+          Required: false
+          StringAttributeConstraints:
+            MaxLength: 256
+            MinLength: 1
+        - Name: lastName
+          AttributeDataType: String
+          Mutable: true
+          Required: false
+          StringAttributeConstraints:
+            MaxLength: 256
+            MinLength: 1
+        - Name: batchCode
+          AttributeDataType: String
+          Mutable: true
+          Required: false
+          StringAttributeConstraints:
+            MaxLength: 256
+            MinLength: 1
+        - Name: membership
+          AttributeDataType: String
+          Mutable: true
+          Required: false
+          StringAttributeConstraints:
+            MaxLength: 256
+            MinLength: 1
+        - Name: schoolHouse
+          AttributeDataType: String
+          Mutable: true
+          Required: false
+          StringAttributeConstraints:
+            MaxLength: 256
+            MinLength: 1
+        - Name: batch
+          AttributeDataType: String
+          Mutable: true
+          Required: false
+          StringAttributeConstraints:
+            MaxLength: 256
+            MinLength: 1
+        - Name: secondPhoneNumber
+          AttributeDataType: String
+          Mutable: true
+          Required: false
+          StringAttributeConstraints:
+            MaxLength: 256
+            MinLength: 1
+      Policies:
+        PasswordPolicy:
+          MinimumLength: !Ref PasswordMinimumLength
+          RequireLowercase: !If [ DoRequireLowerLetter, true, !Ref "AWS::NoValue" ]
+          RequireUppercase: !If [ DoRequireUpperLetter, true, !Ref "AWS::NoValue" ]
+          RequireNumbers: !If [ DoRequireNumber, true, !Ref "AWS::NoValue" ]
+          RequireSymbols: !If [ DoRequireSymbol, true, !Ref "AWS::NoValue" ]
+      SmsConfiguration:
+        SnsCallerArn: !GetAtt CustomSNSRole.Arn
+      LambdaConfig:
+        KMSKeyID: !GetAtt CustomKey.Arn
+        PreSignUp: !GetAtt PreSignUpFunction.Arn
+        PostConfirmation: !GetAtt PostConfirmationFunction.Arn
+        PreAuthentication: !GetAtt PreAuthenticationFunction.Arn
+      UsernameConfiguration:
+        CaseSensitive: true
+
+  UserPoolClient:
+    Type: AWS::Cognito::UserPoolClient
+    DependsOn:
+      - CognitoUserPoolIdentityProviderGoogle
+    Properties:
+      GenerateSecret: false
+      ClientName: !Ref UserPoolClientName
+      UserPoolId: !Ref UserPool
+      SupportedIdentityProviders:
+        - COGNITO
+        - !If [ DoEnableFederatedGoogle, Google, !Ref "AWS::NoValue" ]
+      CallbackURLs: !If [ DoCreateOAuthFlow, !Ref CallBackUrlUserPoolClient, !Ref "AWS::NoValue" ]
+      LogoutURLs: !If [ DoCreateOAuthFlow, !Ref LogOutUrlUserPoolClient, !Ref "AWS::NoValue" ]
+      AllowedOAuthFlowsUserPoolClient: !If [ DoCreateOAuthFlow, true, !Ref "AWS::NoValue" ] # true
+      AllowedOAuthFlows: !If
+        - DoCreateOAuthFlow
+        - - code
+          - implicit
+        - !Ref "AWS::NoValue"
+      AllowedOAuthScopes: !If
+        - DoCreateOAuthFlow
+        - - email
+          - openid
+          - profile
+          - aws.cognito.signin.user.admin
+        - !Ref "AWS::NoValue"
+      ExplicitAuthFlows:
+        - ALLOW_USER_PASSWORD_AUTH
+        - ALLOW_ADMIN_USER_PASSWORD_AUTH
+        - ALLOW_REFRESH_TOKEN_AUTH
+        - ALLOW_USER_SRP_AUTH
+
+  CognitoUserPoolIdentityProviderGoogle:
+    Type: AWS::Cognito::UserPoolIdentityProvider
+    Condition: DoEnableFederatedGoogle
+    Properties:
+      ProviderName: Google
+      AttributeMapping:
+        email: email
+        name: name
+      ProviderDetails:
+        client_id: !Ref FIDGoogleClientId
+        client_secret: !Ref FIDGoogleClientSecret
+        authorize_scopes: profile email openid
+      ProviderType: Google
+      UserPoolId: !Ref UserPool
+
+  IdentityPool:
+    Type: AWS::Cognito::IdentityPool
+    Properties:
+      IdentityPoolName: !Ref IdentityPoolName
+      AllowUnauthenticatedIdentities: true
+      CognitoIdentityProviders:
+        - ClientId: !Ref UserPoolClient
+          ProviderName: !GetAtt UserPool.ProviderName
+
+  IdentityPoolRoleMapping:
+    Type: AWS::Cognito::IdentityPoolRoleAttachment
+    Properties:
+      IdentityPoolId: !Ref IdentityPool
+      RoleMappings:
+        CognitoProvider:
+          IdentityProvider: !Sub "cognito-idp.${AWS::Region}.amazonaws.com/${UserPool}:${UserPoolClient}"
+          AmbiguousRoleResolution: Deny # AuthenticatedRole, Deny
+          Type: Token # Token, Rules
+      Roles:
+        authenticated: !GetAtt CognitoAuthenticatedRole.Arn
+        unauthenticated: !GetAtt CognitoUnAuthenticatedRole.Arn
+
+
+  # ================================= Api =================================
+
+  NestedDefaultApi:
+    Type: AWS::Serverless::Api
+    Properties:
+      TracingEnabled: true
+      StageName: !Ref StageName
+      GatewayResponses:
+        DEFAULT_4XX:
+          ResponseParameters:
+            Headers:
+              Access-Control-Allow-Origin: "'*'"
+              Access-Control-Allow-Headers: "'*'"
+        DEFAULT_5XX:
+          ResponseParameters:
+            Headers:
+              Access-Control-Allow-Origin: "'*'"
+              Access-Control-Allow-Headers: "'*'"
+      Cors:
+        AllowMethods: "'*'"
+        AllowHeaders: "'*'"
+        AllowOrigin: "'*'"
+      Auth:
+        AddDefaultAuthorizerToCorsPreflight: False
+        Authorizers:
+          CognitoAuthorizer:
+            UserPoolArn: !GetAtt UserPool.Arn
+
+  # ================================= Triggers =================================
+
+  PreSignUpFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: lambdas/authentication/
+      Handler: presignup.lambda_handler
+      Role: !Ref AuthRoleArn
+
+  PostConfirmationFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: lambdas/authentication/
+      Handler: post_confirmation.lambda_handler
+      Role: !Ref AuthRoleArn
+
+  PreAuthenticationFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: lambdas/authentication/
+      Handler: pre_authentication_trigger.lambda_handler
+      Role: !Ref AuthRoleArn
+
+  # ================================= Functions =================================
+  AuthenticationSocialSignInFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: lambdas/authentication/
+      Handler: social_signin.lambda_handler
+      Role: !Ref AuthRoleArn
+      Environment:
+        Variables:
+          IDENTITY_POOL_ID: !Ref IdentityPool
+          USER_POOL_ID: !Ref UserPool
+          USER_POOL_CLIENT_ID: !Ref UserPoolClient
+      Events:
+        SocialSignInAuthenticationEvent:
+          Type: Api
+          Properties:
+            Path: /authentication/social-signin
+            Method: post
+            RestApiId: !Ref NestedDefaultApi
+
+  AuthenticationGlobalLogoutFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: lambdas/authentication/
+      Handler: global_logout.lambda_handler
+      Role: !Ref AuthRoleArn
+      Environment:
+        Variables:
+          IDENTITY_POOL_ID: !Ref IdentityPool
+          USER_POOL_ID: !Ref UserPool
+          USER_POOL_CLIENT_ID: !Ref UserPoolClient
+      Events:
+        SignInAuthenticationEvent:
+          Type: Api
+          Properties:
+            Path: /authentication/global-logout
+            Method: post
+            RestApiId: !Ref NestedDefaultApi
+
+
+Outputs:
+  NestedDefaultApiId:
+    Description: "Api gateway ID"
+    Value: !Ref NestedDefaultApi
+
+  NestedCognitoUserPoolId:
+    Description: "Cognito userpool id"
+    Value: !Ref UserPool
+
+  NestedCognitoUserPoolArn:
+    Description: "Cognito userpool Arn"
+    Value: !GetAtt UserPool.Arn
+
+  NestedCognitoUserPoolClientId:
+    Description: "Cognito userpool client id"
+    Value: !Ref UserPoolClient
+
+  NestedCognitoIdentityPoolId:
+    Description: "Cognito identity id"
+    Value: !Ref IdentityPool
+
+  NestedDomainName:
+    Description: "Domain Name"
+    Value: !Ref UserPoolDomain

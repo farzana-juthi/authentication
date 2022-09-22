@@ -1,0 +1,276 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: >
+  auth
+
+# More info about Globals: https://github.com/awslabs/serverless-application-model/blob/master/docs/globals.rst
+Globals:
+  Function:
+    Timeout: 3
+
+# Mapping for different parameters for different environment
+Mappings:
+  Environments:
+    dev:
+      "CallBackUrlUserPoolClient": "http://localhost:4200/dashboard/" # here you have to give urls where gmail will redirect after credential verification; You can add multiple url by comma separation.
+      "LogOutUrlUserPoolClient": "http://localhost:4200/login/" # here you have to give urls where logout url be redirected from cognito; You can add multiple url by comma separation.
+      "FIDGoogleClientId": "816187719480-26d52o4pnfe789ivkjqdm0jqakk19m38.apps.googleusercontent.com" # Google app client id
+      "FIDGoogleClientSecret": "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" # Google app secret client id
+
+# Application parameter list
+Parameters:
+  ProjectName:
+    Type: String
+    Default: "learning-auth"
+    Description: This is mandatory. You have to give a project name in default value.
+
+  StageName:
+    Type: String
+    Default: "dev"
+    Description: For different environment we will pass different stagename. By defualt, it is dev
+
+  UserPoolName:
+    Type: String
+    Default: "user-pool"
+    Description: User Pool Name
+
+  IdentityPoolName:
+    Type: String
+    Default: "identity-pool"
+    Description: Identity pool name
+
+  UserPoolClientName:
+    Type: String
+    Default: "userpool-client"
+    Description: User pool client name
+
+  CreateCognitoDomain:
+    Type: String
+    Default: "y"
+    Description: Here value can be y or n. This variable will be used to create cognito domain
+
+  DomainName:
+    Type: String
+    Default: "auth-stack"
+    Description: Domain name should be unique. Here you have to give your authentication domain name which will be used in social configuration
+
+  EnableFederatedGoogle:
+    Type: String
+    Default: "y"
+    Description: Enable google authentication depending on this condition variable. Value can be y or n
+
+  VerifyEmail:
+    Type: String
+    Default: "y"
+    Description: This variable will be used as condition to verify email or not
+
+  VerifyPhone:
+    Type: String
+    Default: "y"
+    Description: This variable will be used as condition to verify phone or not
+
+  EmailAsAlias:
+    Type: String
+    Default: "y"
+    Description: This variable will be used as email alias
+
+  PhoneAsAlias:
+    Type: String
+    Default: "y"
+    Description: This variable will be used as phone alias
+
+  PasswordMinimumLength:
+    Type: Number
+    Default: 6
+    Description: This variable will be used to declare minimum length of passowrd
+
+  PasswordLowerLetterRequired:
+    Type: String
+    Default: "y"
+    Description: This variable will be used to define any lower case value is required or not in passowrd
+
+  PasswordUpperLetterRequired:
+    Type: String
+    Default: "y"
+    Description: This variable will be used to define any upper is required or not in passowrd
+
+  PasswordNumberRequired:
+    Type: String
+    Default: "y"
+    Description: This variable will be used to define any number is required or not in passowrd
+
+  PasswordSymbolRequired:
+    Type: String
+    Default: "n"
+    Description: This variable will be used to define any special character is required or not in passowrd
+  # Authentication related parameters end
+
+Resources:
+  # Authentication start
+  AuthRole:
+    Type: AWS::IAM::Role
+    Properties:
+      Policies:
+        - PolicyName: root
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - "acm:*"
+                  - "application-autoscaling:*"
+                  - "cloudwatch:*"
+                  - "cloudformation:*"
+                  - "cognito-identity:*"
+                  - "cognito-idp:*"
+                  - "cognito-sync:*"
+                  - "cloudfront-vod:*"
+                  - "iam:*"
+                  - "kms:*"
+                  - "kinesis:*"
+                  - "lambda:*"
+                  - "logs:*"
+                  - "outposts:*"
+                  - "pi:*"
+                  - "resource-groups:*"
+                  - "s3:*"
+                  - "secretsmanager:*"
+                  - "sns:*"
+                  - "ses:*"
+                  - "states:*"
+                  - "tag:*"
+                Resource: '*'
+              - Effect: Allow
+                Action:
+                  - "rds-db:connect"
+                Resource: !Sub "arn:aws:rds:us-west-2:${AWS::AccountId}:db-proxy:*/*"
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - 'lambda.amazonaws.com'
+                - 'cloudfront.amazonaws.com'
+                - !Sub "states.${AWS::Region}.amazonaws.com"
+                - 'secretsmanager.amazonaws.com'
+            Action:
+              - 'sts:AssumeRole'
+
+  AuthenticationStack:
+    Type: AWS::Serverless::Application
+    Properties:
+      Location: auth-stack/template.yaml
+      Parameters:
+        StageName: !Ref StageName
+        UserPoolName: !Sub "${ProjectName}-${UserPoolName}-${StageName}"
+        IdentityPoolName: !Sub "${ProjectName}-${IdentityPoolName}-${StageName}"
+        UserPoolClientName: !Sub "${ProjectName}-${UserPoolClientName}-${StageName}"
+        VerifyEmail: !Ref VerifyEmail
+        VerifyPhone: !Ref VerifyPhone
+        EmailAsAlias: !Ref EmailAsAlias
+        PhoneAsAlias: !Ref PhoneAsAlias
+        PasswordMinimumLength: !Ref PasswordMinimumLength
+        PasswordLowerLetterRequired: !Ref PasswordLowerLetterRequired
+        PasswordUpperLetterRequired: !Ref PasswordUpperLetterRequired
+        PasswordNumberRequired: !Ref PasswordNumberRequired
+        PasswordSymbolRequired: !Ref PasswordSymbolRequired
+        CreateCognitoDomain: !Ref CreateCognitoDomain
+        DomainName: !Sub "${ProjectName}-${DomainName}-${StageName}"
+        EnableFederatedGoogle: !Ref EnableFederatedGoogle
+        FIDGoogleClientId: !FindInMap [ Environments, !Ref StageName, FIDGoogleClientId ]
+        FIDGoogleClientSecret: !FindInMap [ Environments, !Ref StageName, FIDGoogleClientSecret ]
+        CallBackUrlUserPoolClient: !FindInMap [ Environments, !Ref StageName, CallBackUrlUserPoolClient ]
+        LogOutUrlUserPoolClient: !FindInMap [ Environments, !Ref StageName, LogOutUrlUserPoolClient ]
+        AuthRoleArn: !GetAtt AuthRole.Arn
+
+  # Auth API proxy
+  AuthApiResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      ParentId: !GetAtt RootDefaultApi.RootResourceId
+      RestApiId: !Ref RootDefaultApi
+      PathPart: 'auth'
+
+  AuthProxyApiResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      ParentId: !Ref AuthApiResource
+      RestApiId: !Ref RootDefaultApi
+      PathPart: '{proxy+}'
+
+  AuthProxyMethod:
+    DependsOn:
+      - AuthenticationStack
+    Type: AWS::ApiGateway::Method
+    Properties:
+      HttpMethod: ANY
+      ResourceId: !Ref AuthProxyApiResource
+      RestApiId: !Ref RootDefaultApi
+      AuthorizationType: NONE
+      RequestParameters:
+        method.request.path.proxy: true
+      Integration:
+        CacheKeyParameters:
+          - 'method.request.path.proxy'
+        RequestParameters:
+          integration.request.path.proxy: 'method.request.path.proxy'
+        IntegrationHttpMethod: ANY
+        Type: HTTP_PROXY
+        Uri: !Sub "https://${AuthenticationStack.Outputs.NestedDefaultApiId}.execute-api.${AWS::Region}.amazonaws.com/${StageName}/{proxy}"
+        PassthroughBehavior: WHEN_NO_MATCH
+        IntegrationResponses:
+          - StatusCode: 200
+  # Authentication end
+
+  # For using a common URL for full application, we need a common API
+  RootDefaultApi:
+    Type: AWS::Serverless::Api
+    Properties:
+      TracingEnabled: true
+      StageName: !Ref StageName
+      Cors:
+        AllowMethods: "'*'"
+        AllowHeaders: "'*'"
+        AllowOrigin: "'*'"
+      Auth:
+        Authorizers:
+          CognitoAuthorizer:
+            UserPoolArn: !GetAtt AuthenticationStack.Outputs.NestedCognitoUserPoolArn
+
+  # API deployment is needed for avoiding manual deploy from API gateway every time when add new stack in root template
+  RootDefaultApiDeployment:
+   DependsOn:
+     - AuthProxyMethod
+   Type: AWS::ApiGateway::Deployment
+   Properties:
+     RestApiId: !Ref RootDefaultApi
+     StageName: !Ref StageName
+
+  # Every template need minimum one lambda function
+  MainFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: main/
+      Handler: app.lambda_handler
+      Runtime: python3.8
+      Architectures:
+        - x86_64
+      Events:
+        MainAPI:
+          Type: Api
+          Properties:
+            Path: /ping-main
+            Method: get
+            RestApiId: !Ref RootDefaultApi
+
+Outputs:
+  CognitoAppClientID:
+    Description: "Cognito app client ID"
+    Value: !GetAtt AuthenticationStack.Outputs.NestedCognitoUserPoolClientId
+  RootAPI:
+    Description: "Application API base url"
+    Value: !Sub "https://${RootDefaultApi}.execute-api.${AWS::Region}.amazonaws.com/${StageName}"
+  DomainURL:
+    Description: "Application Domain URL"
+    Value: !Sub "https://${AuthenticationStack.Outputs.NestedDomainName}.auth.us-west-2.amazoncognito.com"
