@@ -14,14 +14,14 @@ Mappings:
     dev:
       "CallBackUrlUserPoolClient": "http://localhost:4200/dashboard/" # here you have to give urls where gmail will redirect after credential verification; You can add multiple url by comma separation.
       "LogOutUrlUserPoolClient": "http://localhost:4200/login/" # here you have to give urls where logout url be redirected from cognito; You can add multiple url by comma separation.
-      "FIDGoogleClientId": "816187719480-26d52o4pnfe789ivkjqdm0jqakk19m38.apps.googleusercontent.com" # Google app client id
-      "FIDGoogleClientSecret": "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" # Google app secret client id
+      "FIDFacebookClientId": "1575632069520752" #
+      "FIDFacebookClientSecret": "3e39e553f48aefc6eaedd59349b570c3"
 
 # Application parameter list
 Parameters:
   ProjectName:
     Type: String
-    Default: "learning-auth"
+    Default: "learning-fb"
     Description: This is mandatory. You have to give a project name in default value.
 
   StageName:
@@ -54,10 +54,10 @@ Parameters:
     Default: "auth-stack"
     Description: Domain name should be unique. Here you have to give your authentication domain name which will be used in social configuration
 
-  EnableFederatedGoogle:
+  EnableFederatedFacebook:
     Type: String
     Default: "y"
-    Description: Enable google authentication depending on this condition variable. Value can be y or n
+    Description: Enable facebook authentication depending on this condition variable. Value can be y or n
 
   VerifyEmail:
     Type: String
@@ -177,9 +177,9 @@ Resources:
         PasswordSymbolRequired: !Ref PasswordSymbolRequired
         CreateCognitoDomain: !Ref CreateCognitoDomain
         DomainName: !Sub "${ProjectName}-${DomainName}-${StageName}"
-        EnableFederatedGoogle: !Ref EnableFederatedGoogle
-        FIDGoogleClientId: !FindInMap [ Environments, !Ref StageName, FIDGoogleClientId ]
-        FIDGoogleClientSecret: !FindInMap [ Environments, !Ref StageName, FIDGoogleClientSecret ]
+        EnableFederatedFacebook: !Ref EnableFederatedFacebook
+        FIDFacebookClientId: !FindInMap [ Environments, !Ref StageName, FIDFacebookClientId ]
+        FIDFacebookClientSecret: !FindInMap [ Environments, !Ref StageName, FIDFacebookClientSecret ]
         CallBackUrlUserPoolClient: !FindInMap [ Environments, !Ref StageName, CallBackUrlUserPoolClient ]
         LogOutUrlUserPoolClient: !FindInMap [ Environments, !Ref StageName, LogOutUrlUserPoolClient ]
         AuthRoleArn: !GetAtt AuthRole.Arn
